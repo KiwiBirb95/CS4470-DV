@@ -20,6 +20,7 @@ def get_local_ip():
 
 class DistanceVectorRouting:
     def __init__(self, topology_file, update_interval):
+        self.stop_event = threading.Event()
         self.topology_file = topology_file
         self.update_interval = update_interval
         self.routing_table = {}
@@ -174,8 +175,9 @@ class DistanceVectorRouting:
                     print(f"Error sending update to connection {connection_id}: {e}")
 
     def periodic_updates(self):
-        """Send periodic routing updates to neighbors."""
-        while True:
+        """Send periodic updates to neighbors."""
+        print("Starting periodic updates...")
+        while not self.stop_event.is_set():
             time.sleep(self.update_interval)
             self.send_update()
 
@@ -193,18 +195,41 @@ class DistanceVectorRouting:
         for connection_id, (_, address) in self.connections.items():
             print(f"{connection_id}: {address}")
 
+    def handle_crash(self):
+        """Simulate a server crash by closing all connections."""
+        print("Shutting down...")
+        self.stop_event.set()  # Stop threads
+        for connection_id, (client_socket, _) in self.connections.items():
+            client_socket.close()
+        self.server_socket.close()
+        print("Server crashed successfully.")
+        sys.exit(0)
+
     def listen_for_commands(self):
         """Listen for user commands and execute actions."""
+        print("Available commands: update, step, packets, display, disable, crash")
         while True:
-            command = input("Enter command: ").strip()
-            if command == "list":
-                self.connection_list()
-            elif command == "display":
-                self.handle_display()
-            elif command == "step":
-                self.send_update()
-            else:
-                print("Unknown command")
+            try:
+                command = input("Enter command: ").strip()
+                if command.startswith("update"):
+                    _, server_id1, server_id2, link_cost = command.split()
+                    self.handle_update(int(server_id1), int(server_id2), link_cost)
+                elif command == "step":
+                    self.send_update()
+                    print("Step executed.")
+                elif command == "packets":
+                    self.handle_packets()
+                elif command == "display":
+                    self.handle_display()
+                elif command.startswith("disable"):
+                    _, server_id = command.split()
+                    self.handle_disable(int(server_id))
+                elif command == "crash":
+                    self.handle_crash()
+                else:
+                    print(f"Unknown command: {command}. Type one of: update, step, packets, display, disable, crash.")
+            except Exception as e:
+                print(f"Error processing command: {e}")
 
     def start_server(self):
         """Start the server."""
@@ -212,6 +237,35 @@ class DistanceVectorRouting:
         threading.Thread(target=self.connect_to_neighbors, daemon=True).start()
         threading.Thread(target=self.periodic_updates, daemon=True).start()
         self.listen_for_commands()
+
+    def handle_update(self, server_id1, server_id2, link_cost):
+        """Handle the update command to change the link cost."""
+        if server_id1 == self.server_id or server_id2 == self.server_id:
+            neighbor_id = server_id1 if server_id2 == self.server_id else server_id2
+            cost = INFINITY if link_cost.lower() == "inf" else int(link_cost)
+
+            if neighbor_id in self.neighbors:
+                self.neighbors[neighbor_id] = cost
+                self.routing_table[neighbor_id] = (neighbor_id, cost)
+                print(f"update {server_id1} {server_id2} {link_cost} SUCCESS")
+            else:
+                print(f"update {server_id1} {server_id2} ERROR: Not a direct neighbor.")
+        else:
+            print(f"update {server_id1} {server_id2} ERROR: This server is not part of the link.")
+
+    def handle_packets(self):
+        """Display the number of packets received since the last invocation."""
+        print(f"packets SUCCESS: {self.packet_count} packets received.")
+        self.packet_count = 0
+
+    def handle_disable(self, server_id):
+        """Disable the link to a given server."""
+        if server_id in self.neighbors:
+            self.neighbors[server_id] = INFINITY
+            self.routing_table[server_id] = (None, INFINITY)
+            print(f"disable {server_id} SUCCESS")
+        else:
+            print(f"disable {server_id} ERROR: Not a direct neighbor.")
 
 
 if __name__ == "__main__":
